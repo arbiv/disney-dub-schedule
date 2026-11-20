@@ -27,3 +27,13 @@ In the Disney+ tab console:
 localStorage.setItem('dubScheduleFakeDay', '5') // act as if today is Friday
 localStorage.removeItem('dubScheduleFakeDay')   // back to the real day
 ```
+
+## Disclaimer
+
+This is an unofficial, personal project. It is not affiliated with, endorsed by, sponsored by, or connected to The Walt Disney Company, Disney+, or any of their affiliates. "Disney" and "Disney+" are trademarks of their respective owners and are used here only to describe what the script works with.
+
+The script only changes settings in your own browser on your own account: it picks an audio track that Disney+ already offers and hides another option from the menu. It does not download, copy, record, or redistribute any content, and it does not bypass DRM, geo-restrictions, paywalls, or any other access control.
+
+The software is provided "as is", without warranty of any kind, as described in the [LICENSE](LICENSE). Use it at your own risk. You are responsible for making sure your use complies with the Disney+ Terms of Use and any laws that apply to you. The author is not liable for any damage, account action, data loss, or other consequence arising from its use. Disney+ may change its website at any time, which may stop the script from working.
+
+This is not legal advice.
