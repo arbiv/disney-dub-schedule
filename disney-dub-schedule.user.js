@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Disney+ Hebrew dubbing schedule (English on most days)
 // @namespace    https://github.com/arbiv/disney-dub-schedule
-// @version      2.1.0
-// @description  Allows Hebrew audio on Disney+ only on selected weekdays (default Mon and Thu). On other days Hebrew audio rows are hidden and English audio is selected automatically.
+// @version      2.2.0
+// @description  Allows non-English audio on Disney+ only on selected weekdays (default Mon and Thu). On other days every non-English audio row (Hebrew, Spanish, ...) is hidden and English audio is selected automatically.
 // @author       arbiv
 // @homepageURL  https://github.com/arbiv/disney-dub-schedule
 // @updateURL    https://raw.githubusercontent.com/arbiv/disney-dub-schedule/main/disney-dub-schedule.user.js
@@ -18,12 +18,15 @@
  * HOW IT WORKS
  *  - A 1 second poll (no MutationObserver, because it does not cross shadow roots) does two things on
  *    restricted days:
- *      A) Hides the Hebrew rows of the audio list whenever it is on screen, and clicks English if Hebrew
- *         is the ticked row (covers a kid opening the panel by hand).
+ *      A) Hides every NON-English row of the audio list (Hebrew, Spanish, French, ...) whenever it is on
+ *         screen, and clicks English if a non-English row is the ticked one (covers a kid opening the
+ *         panel by hand).
  *      B) On /play/ pages, when the video is playing: wakes the controls, clicks the gear, reads the
- *         current audio language from the "Audio options" menu item, and only if it is Hebrew opens the
- *         list, clicks English and closes the panel. If it is not Hebrew, it just closes the panel.
- *  - If the title has no English audio row, nothing is hidden and nothing is clicked.
+ *         current audio language from the "Audio options" menu item, and only if it is NOT English opens
+ *         the list, clicks English and closes the panel. If it is English, it just closes the panel.
+ *  - "English" = a row whose label is, or starts with, English / אנגלית (so "English [Audio Description]"
+ *    counts as English and is never hidden). The plain "English" row is the one we click.
+ *  - If the title has no plain English audio row, nothing is hidden and nothing is clicked.
  *  - After MAX_ATTEMPTS failures it keeps watching (no clicks) and retries as soon as the gear becomes
  *    visible through real user activity, at most once per OPPORTUNISTIC_COOLDOWN_MS.
  *  - On allowed days the script does nothing (it only un-hides rows it hid earlier).
@@ -42,11 +45,10 @@
   'use strict';
 
   // ===================== CONFIG =====================
-  const ALLOWED_DAYS = [1, 4];      // Hebrew dubbing allowed on these days. Date().getDay(): Sun=0, Mon=1 ... Thu=4 ... Sat=6
-  const PREFERRED = 'English';      // language to switch to (key of LANGS)
-  const BLOCKED = 'Hebrew';         // restricted language on other days (key of LANGS)
+  const ALLOWED_DAYS = [1, 4];      // all audio languages allowed on these days; other days = English only. Date().getDay(): Sun=0, Mon=1 ... Thu=4 ... Sat=6
+  const PREFERRED = 'English';      // the only audio language allowed on restricted days (key of LANGS)
   const SHOW_TOAST = true;          // small Hebrew message once per title
-  const MUTE_DURING_SWITCH = false;  // mute the video only while switching away from Hebrew
+  const MUTE_DURING_SWITCH = false;  // mute the video only while switching away from a non-English language
   const MAX_ATTEMPTS = 4;           // failed attempts per title before giving up
   const RETRY_DELAY_MS = 3000;      // wait between failed attempts
   const OPPORTUNISTIC_COOLDOWN_MS = 15000; // after MAX_ATTEMPTS failures: wait this long between extra tries
@@ -57,10 +59,9 @@
 
   const LANGS = {
     English: /^(english|אנגלית)(?![\p{L}])/iu,
-    Hebrew: /^(hebrew|עברית)(?![\p{L}])/iu,
   };
-  const AD_RE = /audio description|תיאור/i;   // audio-description tracks are never auto-picked
-  const TOAST_TEXT = 'היום האודיו באנגלית. דיבוב בעברית רק בימי שני וחמישי.';
+  const AD_RE = /audio description|תיאור/i;   // English audio-description tracks stay visible but are never auto-picked
+  const TOAST_TEXT = 'היום האודיו רק באנגלית. שפות אחרות זמינות רק בימי שני וחמישי.';
 
   // Selectors (see structure above)
   const SEL = {
@@ -150,23 +151,30 @@
   };
   const isKind = (label, lang) => !!LANGS[lang] && LANGS[lang].test(label);
 
-  // Groups all audio rows by their <ul>. Returns [{list, rows, blocked:[li], preferred:[li]}].
+  // Groups all audio rows by their <ul>. Returns [{list, rows, english:[li], others:[li], pick}].
+  //   english = every row that is English (incl. audio description); others = every other language;
+  //   pick = the English row we click: plain "English" (no audio description), or null if there is none.
   function audioGroups() {
     const map = new Map();
     deepQuery(SEL.audioRow).forEach((li) => {
       const list = li.parentNode;
       if (!list) return;
       let g = map.get(list);
-      if (!g) { g = { list, rows: [], blocked: [], preferred: [] }; map.set(list, g); }
+      if (!g) { g = { list, rows: [], english: [], others: [], pick: null }; map.set(list, g); }
       g.rows.push(li);
       const label = rowLabel(li);
-      if (isKind(label, BLOCKED)) g.blocked.push(li);
-      else if (isKind(label, PREFERRED) && !AD_RE.test(label)) g.preferred.push(li);
+      if (!label) return;                                  // unknown row: never hide it
+      if (isKind(label, PREFERRED)) g.english.push(li);
+      else g.others.push(li);
+    });
+    map.forEach((g) => {
+      const plain = g.english.filter((li) => !AD_RE.test(rowLabel(li)));
+      g.pick = plain.find(isVisible) || plain[0] || null;
     });
     return Array.from(map.values());
   }
 
-  // ---------- A) hide Hebrew rows, switch if Hebrew is ticked ----------
+  // ---------- A) hide non-English rows, switch if one of them is ticked ----------
   let busy = false;                 // true while the playback routine is clicking
   let lastListClick = 0;
   const recentSwitches = [];
@@ -192,17 +200,16 @@
   function handleLists() {
     const groups = audioGroups();
     for (const g of groups) {
-      if (!g.preferred.length || !g.blocked.length) continue; // no English, or no Hebrew: leave alone
-      g.blocked.forEach(hideRow);
-      if (!busy && g.blocked.some(rowChecked) && isVisible(g.list)) {
+      if (!g.pick) continue;                                   // title has no (plain) English audio: leave alone
+      g.others.forEach(hideRow);
+      if (!busy && g.others.some(rowChecked) && isVisible(g.list)) {
         const now = Date.now();
         while (recentSwitches.length && now - recentSwitches[0] > 60000) recentSwitches.shift();
         if (now - lastListClick > 3000 && recentSwitches.length < 6) {
           lastListClick = now;
           recentSwitches.push(now);
-          const target = g.preferred.find(isVisible) || g.preferred[0];
-          LOG('Hebrew ticked, clicking English');
-          realClick(rowButton(target));
+          LOG('non-English audio ticked, clicking English');
+          realClick(rowButton(g.pick));
           showToast(currentKey() || 'page');
         }
       }
@@ -335,9 +342,9 @@
     if (!nav) { LOG('audio menu item not found'); await closePanel(); return 'retry'; }
     const lang = currentAudioLanguage(nav);
     LOG('current audio:', lang);
-    if (lang && !isKind(lang, BLOCKED)) { await closePanel(); return 'done'; }
+    if (lang && isKind(lang, PREFERRED)) { await closePanel(); return 'done'; }   // already English
 
-    // 3) Hebrew (or unknown): open the list and pick English
+    // 3) not English (or unknown): open the list and pick English
     let prevMuted = video.muted;
     try {
       if (MUTE_DURING_SWITCH && !prevMuted) video.muted = true;
@@ -348,9 +355,9 @@
       }, 2500);
       if (!groups) { await closePanel(); return 'retry'; }
       const g = groups[0];
-      if (!g.preferred.length) { await closePanel(); return 'no-english'; }   // title has no English audio
-      g.blocked.forEach(hideRow);
-      const english = g.preferred.find(isVisible) || g.preferred[0];
+      if (!g.pick) { await closePanel(); return 'no-english'; }   // title has no English audio
+      g.others.forEach(hideRow);
+      const english = g.pick;
       if (!rowChecked(english)) {
         LOG('clicking English');
         realClick(rowButton(english));
@@ -423,7 +430,7 @@
         return;
       }
       const listPresent = handleLists();
-      // While an audio list is on screen, re-check quickly so Hebrew never stays visible for long.
+      // While an audio list is on screen, re-check quickly so non-English rows never stay visible for long.
       if (listPresent && !fastTimer) {
         fastTimer = setTimeout(() => { fastTimer = null; tick(); }, 250);
       }

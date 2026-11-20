@@ -1,6 +1,6 @@
-# Disney+ Hebrew dubbing schedule
+# Disney+ audio language schedule
 
-A Tampermonkey userscript for Disney+ in the browser. It allows Hebrew audio only on selected weekdays (Monday and Thursday by default). On other days it hides the Hebrew audio option and switches the player to English automatically.
+A Tampermonkey userscript for Disney+ in the browser. It allows non-English audio (Hebrew dubbing, Spanish, French, any other language) only on selected weekdays (Monday and Thursday by default). On all other days only English audio is available: every non-English audio option is hidden from the Audio menu, and if the current audio is not English the player is switched to English automatically. A title that has no English audio is left alone. Subtitles are never touched.
 
 ## Install
 
@@ -15,8 +15,8 @@ Hebrew instructions: [INSTALL_HE.md](INSTALL_HE.md).
 
 At the top of the script:
 
-- `ALLOWED_DAYS`: days when Hebrew is allowed (0 = Sunday ... 6 = Saturday). Default `[1, 4]`.
-- `PREFERRED`: the audio language to switch to. Default `English`.
+- `ALLOWED_DAYS`: days when all audio languages are allowed (0 = Sunday ... 6 = Saturday). Default `[1, 4]`. On every other day only English is available.
+- `PREFERRED`: the only audio language allowed on restricted days, and the one the script switches to. Default `English`. A row counts as English if its label is, or starts with, `English` (so `English [Audio Description]` stays visible, but the plain `English` row is the one that gets selected).
 - `DEBUG`: set to `true` to log `[DubSchedule]` lines to the console.
 
 ## Testing other days
